@@ -3,11 +3,37 @@ const { MongoClient, ServerApiVersion } = require("mongodb");
 const app = express();
 require("dotenv").config();
 const cors = require("cors");
+const admin = require("firebase-admin");
 const port = 3000;
+
+var serviceAccount = require("/firebase_admin_sdk_key.json");
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount)
+});
 
 // middlewear
 app.use(express.json());
 app.use(cors());
+
+
+// jwt verification middlewear
+const verifyFireBaseToke = async (req, res, next) => {
+  const token = req.headers.authorization;
+  // console.log(token);
+  if (!token) {
+    return res.status(401).send({ message: "unauthorized acces" });
+  }
+
+  try {
+    const idToken = token.split(" ")[1];
+    const decoded = await admin.auth().verifyIdToken(idToken);
+    req.decoded_email = decoded.email;
+    next();
+  } catch (error) {
+    return res.status(401).send({ message: "Unauthorized access" });
+  }
+};
 
 const uri = `mongodb+srv://${process.env.DB_USERNAME}:${process.env.DB_PASS}@cluster0.8xsgmgv.mongodb.net/?appName=Cluster0`;
 
@@ -50,6 +76,16 @@ async function run() {
         const query = {email};
         const user = await usersCollection.findOne(query);
         res.send({role : user?.role});
+    })
+
+
+
+    // lessons API
+
+    // lessons post
+    app.post("/lessons", async (req, res) => {
+      const lessonsDetail = req.body;
+      
     })
 
 
