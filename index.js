@@ -6,7 +6,7 @@ const cors = require("cors");
 const admin = require("firebase-admin");
 const port = 3000;
 
-var serviceAccount = require("/firebase_admin_sdk_key.json");
+var serviceAccount = require("./firebase_admin_sdk_key.json");
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
@@ -60,6 +60,7 @@ async function run() {
     app.post("/users", async(req, res) => {
         const usersDetail = req.body;
         usersDetail.role = "user";
+        usersDetail.isPremium = false;
         usersDetail.createdAt = new Date();
         const email = usersDetail?.email;
         const existingUser = await usersCollection.findOne({email});
@@ -75,7 +76,7 @@ async function run() {
         const email = req.params.email;
         const query = {email};
         const user = await usersCollection.findOne(query);
-        res.send({role : user?.role});
+        res.send({role : user?.role , isPremium : user?.isPremium});
     })
 
 
@@ -83,9 +84,17 @@ async function run() {
     // lessons API
 
     // lessons post
-    app.post("/lessons", async (req, res) => {
+    app.post("/lessons", verifyFireBaseToke, async (req, res) => {
       const lessonsDetail = req.body;
-      
+      console.log(lessonsDetail);
+      lessonsDetail.createdAt = new Date();
+      const email = lessonsDetail?.authorEmail;
+      const userRole = await usersCollection.findOne({email});
+      if(userRole?.role !== "admin"){
+        return res.status(403).send({message : "forbidden access"})
+      }
+      const result = await lessonsCollection.insertOne(lessonsDetail);
+      res.send(result);
     })
 
 
