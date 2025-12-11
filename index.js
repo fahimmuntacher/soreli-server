@@ -1,10 +1,10 @@
 const express = require("express");
 const { MongoClient, ServerApiVersion } = require("mongodb");
-const stripe = require("stripe")(`${process.env.STRIPE_KEY}`);
-
 const app = express();
 require("dotenv").config();
 const cors = require("cors");
+const CryptoJS = require("crypto-js");
+const stripe = require("stripe")(`${process.env.STRIPE_KEY}`);
 const admin = require("firebase-admin");
 const port = 3000;
 
@@ -13,6 +13,13 @@ var serviceAccount = require("./firebase_admin_sdk_key.json");
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
 });
+
+function generateTrackingId() {
+  const time = Date.now().toString(36).toUpperCase();
+  const randomWordArray = CryptoJS.lib.WordArray.random(3);
+  const randomHash = randomWordArray.toString(CryptoJS.enc.Hex).toUpperCase();
+  return `PKG-${time}-${randomHash}`;
+}
 
 // middlewear
 app.use(express.json());
@@ -55,6 +62,7 @@ async function run() {
     const myDb = client.db("soreli_db");
     const usersCollection = myDb.collection("users");
     const lessonsCollection = myDb.collection("lessons");
+    const paymentsCollection = myDb.collection("payments");
 
     // users post
     app.post("/users", async (req, res) => {
@@ -102,14 +110,19 @@ async function run() {
       verifyFireBaseToke,
       async (req, res) => {
         try {
-          const { price } = req.body;
+          const { price, email } = req.body;
+          const amount = parseInt(price * 100);
+          console.log(price);
+         if(email !== req.decoded_email){
+          return res.status(403).send({ message: "forbidden access" });
+         }
           const session = await stripe.checkout.sessions.create({
             payment_method_types: ["card"],
             line_items: [
               {
                 price_data: {
                   currency: "bdt",
-                  unit_amount: Number(price) * 100, // 1500 BDT → 150000
+                  unit_amount: amount,
                   product_data: {
                     name: "Premium Membership - Lifetime Access",
                   },
@@ -117,19 +130,86 @@ async function run() {
                 quantity: 1,
               },
             ],
-            userEmail : req.decoded_email,
+            customer_email: req.decoded_email,
             mode: "payment",
             success_url: `${process.env.DOMAIN_NAME}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
             cancel_url: `${process.env.DOMAIN_NAME}/checkout/cancel`,
           });
 
-          res.json({ url: session.url }); // frontend will redirect
+          res.send({ url: session.url });
         } catch (error) {
-          console.error(error);
-          res.status(500).json({ message: "Stripe session creation failed" });
+          console.error("STRIPE ERROR:", error);
+          res
+            .status(500)
+            .json({ message: "Stripe session creation failed", error });
         }
       }
     );
+
+    // stripe gateway
+    app.patch("/checkout-success/:sessionId", async (req, res) => {
+      try {
+        const { sessionId } = req.params;
+        // console.log("Session ID:", sessionId);
+
+        const session = await stripe.checkout.sessions.retrieve(sessionId);
+        console.log(session);
+        const transactionId = session.payment_intent;
+
+        // Check if transaction already exists
+        const paymentExist = await paymentsCollection.findOne({
+          transactionId,
+        });
+        if (paymentExist) {
+          return res.send({
+            message: "Transaction already exists",
+            transactionId,
+            trackingId: paymentExist.trackingId,
+          });
+        }
+
+        const trackingId = generateTrackingId();
+        const email = session.customer_email;
+        if (session.payment_status === "paid") {
+          // Update user
+          await usersCollection.updateOne(
+            { email },
+            {
+              $set: {
+                isPremium: true,
+                trackingId,
+                purchaseAt: new Date(),
+              },
+            }
+          );
+        }
+
+        // Record payment
+        const paymentRecord = {
+          email,
+          amount: session.amount_total / 100,
+          currency: session.currency,
+          transactionId,
+          trackingId,
+          purchaseAt: new Date(),
+        };
+
+        const resultPayment = await paymentsCollection.insertOne(paymentRecord);
+
+        res.send({
+          success: true,
+          trackingId,
+          transactionId,
+          paymentRecordId: resultPayment.insertedId,
+          
+        });
+
+        // console.log("Tracking ID:", trackingId);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ success: false, error: error.message });
+      }
+    });
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
