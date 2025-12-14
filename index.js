@@ -26,7 +26,7 @@ app.use(express.json());
 app.use(cors());
 
 // jwt verification middlewear
-const verifyFireBaseToke = async (req, res, next) => {
+const verifyFirebaseToken = async (req, res, next) => {
   const token = req.headers.authorization;
   // console.log(token);
   if (!token) {
@@ -90,7 +90,7 @@ async function run() {
     // lessons API
 
     // lessons post
-    app.post("/lessons", verifyFireBaseToke, async (req, res) => {
+    app.post("/lessons", verifyFirebaseToken, async (req, res) => {
       const lessonsDetail = req.body;
       // console.log(lessonsDetail);
       lessonsDetail.createdAt = new Date();
@@ -104,18 +104,43 @@ async function run() {
       res.send(result);
     });
 
+    // get all lessons
+    app.get("/lessons/public", async (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 6;
+  const skip = (page - 1) * limit;
+
+  const query = { privacy: "public" };
+
+  const total = await lessonsCollection.countDocuments(query);
+
+  const lessons = await lessonsCollection
+    .find(query)
+    .sort({ createdAt: -1 })
+    .skip(skip)
+    .limit(limit)
+    .toArray();
+
+  res.send({
+    lessons,
+    total,
+    totalPages: Math.ceil(total / limit),
+    currentPage: page,
+  });
+});
+  
     // stripe payment integration
     app.post(
       "/create-checkout-session",
-      verifyFireBaseToke,
+      verifyFirebaseToken,
       async (req, res) => {
         try {
           const { price, email } = req.body;
           const amount = parseInt(price * 100);
           console.log(price);
-         if(email !== req.decoded_email){
-          return res.status(403).send({ message: "forbidden access" });
-         }
+          if (email !== req.decoded_email) {
+            return res.status(403).send({ message: "forbidden access" });
+          }
           const session = await stripe.checkout.sessions.create({
             payment_method_types: ["card"],
             line_items: [
@@ -147,68 +172,88 @@ async function run() {
     );
 
     // stripe gateway
-    app.patch("/checkout-success/:sessionId", async (req, res) => {
-      try {
-        const { sessionId } = req.params;
-        // console.log("Session ID:", sessionId);
+    app.patch(
+      "/checkout-success/:sessionId",
+      verifyFirebaseToken,
+      async (req, res) => {
+        try {
+          const { sessionId } = req.params;
+          // console.log("Session ID:", sessionId);
 
-        const session = await stripe.checkout.sessions.retrieve(sessionId);
-        console.log(session);
-        const transactionId = session.payment_intent;
+          const session = await stripe.checkout.sessions.retrieve(sessionId);
+          console.log(session);
+          const transactionId = session.payment_intent;
 
-        // Check if transaction already exists
-        const paymentExist = await paymentsCollection.findOne({
-          transactionId,
-        });
-        if (paymentExist) {
-          return res.send({
-            message: "Transaction already exists",
+          // Check if transaction already exists
+          const paymentExist = await paymentsCollection.findOne({
             transactionId,
-            trackingId: paymentExist.trackingId,
           });
-        }
+          if (paymentExist) {
+            return res.send({
+              message: "Transaction already exists",
+              transactionId,
+              trackingId: paymentExist.trackingId,
+            });
+          }
 
-        const trackingId = generateTrackingId();
-        const email = session.customer_email;
-        if (session.payment_status === "paid") {
-          // Update user
-          await usersCollection.updateOne(
-            { email },
-            {
-              $set: {
-                isPremium: true,
-                trackingId,
-                purchaseAt: new Date(),
-              },
-            }
+          const trackingId = generateTrackingId();
+          const email = session.customer_email;
+          if (session.payment_status === "paid") {
+            // Update user
+            await usersCollection.updateOne(
+              { email },
+              {
+                $set: {
+                  isPremium: true,
+                  trackingId,
+                  purchaseAt: new Date(),
+                },
+              }
+            );
+          }
+
+          // Record payment
+          const paymentRecord = {
+            email,
+            amount: session.amount_total / 100,
+            currency: session.currency,
+            transactionId,
+            trackingId,
+            purchaseAt: new Date(),
+          };
+
+          const resultPayment = await paymentsCollection.insertOne(
+            paymentRecord
           );
+
+          res.send({
+            success: true,
+            trackingId,
+            transactionId,
+            paymentRecordId: resultPayment.insertedId,
+          });
+
+          // console.log("Tracking ID:", trackingId);
+        } catch (error) {
+          console.error(error);
+          res.status(500).send({ success: false, error: error.message });
         }
-
-        // Record payment
-        const paymentRecord = {
-          email,
-          amount: session.amount_total / 100,
-          currency: session.currency,
-          transactionId,
-          trackingId,
-          purchaseAt: new Date(),
-        };
-
-        const resultPayment = await paymentsCollection.insertOne(paymentRecord);
-
-        res.send({
-          success: true,
-          trackingId,
-          transactionId,
-          paymentRecordId: resultPayment.insertedId,
-          
-        });
-
-        // console.log("Tracking ID:", trackingId);
-      } catch (error) {
-        console.error(error);
-        res.status(500).send({ success: false, error: error.message });
       }
+    );
+
+    // paymet ge
+    app.get("/payment", verifyFirebaseToken, async (req, res) => {
+      const email = req.query.email;
+      const query = {};
+      if (query) {
+        query.email = email;
+      }
+
+      if (email !== req.decoded_email) {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+      const payment = await paymentsCollection.findOne({ email }).toArray();
+      res.send(payment);
     });
 
     // Send a ping to confirm a successful connection
