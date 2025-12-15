@@ -228,39 +228,43 @@ async function run() {
     });
 
     // favourite lessons post api
-    app.patch("/lessons/favorite/:id", verifyFirebaseToken, async (req, res) => {
-      const email = req.decoded_email;
-      const lessonId = req.params.id;
+    app.patch(
+      "/lessons/favorite/:id",
+      verifyFirebaseToken,
+      async (req, res) => {
+        const email = req.decoded_email;
+        const lessonId = req.params.id;
 
-      const userId = await getUserIdByEmail(email);
+        const userId = await getUserIdByEmail(email);
 
-      const lesson = await lessonsCollection.findOne({
-        _id: new ObjectId(lessonId),
-      });
+        const lesson = await lessonsCollection.findOne({
+          _id: new ObjectId(lessonId),
+        });
 
-      const alreadySaved = lesson.favorites?.includes(email);
+        const alreadySaved = lesson.favorites?.includes(email);
 
-      const update = alreadySaved
-        ? {
-            $pull: { favorites: email },
-            $inc: { favoritesCount: -1 },
-          }
-        : {
-            $addToSet: { favorites: email },
-            $inc: { favoritesCount: 1 },
-          };
+        const update = alreadySaved
+          ? {
+              $pull: { favorites: email },
+              $inc: { favoritesCount: -1 },
+            }
+          : {
+              $addToSet: { favorites: email },
+              $inc: { favoritesCount: 1 },
+            };
 
-      await lessonsCollection.updateOne(
-        { _id: new ObjectId(lessonId) },
-        update
-      );
+        await lessonsCollection.updateOne(
+          { _id: new ObjectId(lessonId) },
+          update
+        );
 
-      res.send({ saved: !alreadySaved });
-    });
+        res.send({ saved: !alreadySaved });
+      }
+    );
 
     // report api
     app.post("/lessons/report/:id", verifyFirebaseToken, async (req, res) => {
-      const {  reason } = req.body;
+      const { reason } = req.body;
       const email = req.decoded_email;
       const lessonId = req.params.id;
 
@@ -283,6 +287,54 @@ async function run() {
       });
 
       res.send({ message: "Reported successfully" });
+    });
+
+    // get similar lessons
+    app.get("/lessons/similar/:id", async (req, res) => {
+      const lessonId = req.params.id;
+
+      const currentLesson = await lessonsCollection.findOne({
+        _id: new ObjectId(lessonId),
+      });
+
+      if (!currentLesson) {
+        return res.status(404).send({ message: "Lesson not found" });
+      }
+
+      const { category, tone } = currentLesson;
+
+      const similarLessons = await lessonsCollection
+        .find({
+          _id: { $ne: new ObjectId(lessonId) },
+          $or: [{ category: category }, { tone: tone }],
+          visibility: "public",
+        })
+        .limit(6)
+        // .project({
+        //   title: 1,
+        //   category: 1,
+        //   tone: 1,
+        //   image: 1,
+        //   likesCount: 1,
+        //   favoritesCount: 1,
+        //   authorName: 1,
+        //   createdAt: 1,
+        // })
+        .toArray();
+
+      res.send(similarLessons);
+    });
+
+    // get lesson by author email
+    app.get("/my-lessons", verifyFirebaseToken, async (req, res) => {
+      const email = req.query.email;
+      // console.log(email);
+      const lessons = await lessonsCollection
+        .find({ authorEmail: email })
+        .sort({ createdAt: -1 })
+        .toArray();
+
+      res.send(lessons);
     });
 
     // stripe payment integration
