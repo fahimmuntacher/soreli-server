@@ -228,8 +228,8 @@ async function run() {
     });
 
     // favourite lessons post api
-    app.patch("/lessons/favorite/:id", async (req, res) => {
-      const { email } = req.body;
+    app.patch("/lessons/favorite/:id", verifyFirebaseToken, async (req, res) => {
+      const email = req.decoded_email;
       const lessonId = req.params.id;
 
       const userId = await getUserIdByEmail(email);
@@ -238,15 +238,15 @@ async function run() {
         _id: new ObjectId(lessonId),
       });
 
-      const alreadySaved = lesson.favorites?.includes(userId.toString());
+      const alreadySaved = lesson.favorites?.includes(email);
 
       const update = alreadySaved
         ? {
-            $pull: { favorites: userId.toString() },
+            $pull: { favorites: email },
             $inc: { favoritesCount: -1 },
           }
         : {
-            $addToSet: { favorites: userId.toString() },
+            $addToSet: { favorites: email },
             $inc: { favoritesCount: 1 },
           };
 
