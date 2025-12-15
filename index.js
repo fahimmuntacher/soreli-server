@@ -1,5 +1,5 @@
 const express = require("express");
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const app = express();
 require("dotenv").config();
 const cors = require("cors");
@@ -64,6 +64,16 @@ async function run() {
     const lessonsCollection = myDb.collection("lessons");
     const paymentsCollection = myDb.collection("payments");
 
+    // get user id by email helper function
+    const getUserIdByEmail = async (email) => {
+      const user = await usersCollection.findOne(
+        { email },
+        { projection: { _id: 1 } }
+      );
+
+      return user?._id || null;
+    };
+
     // users post
     app.post("/users", async (req, res) => {
       const usersDetail = req.body;
@@ -106,29 +116,65 @@ async function run() {
 
     // get all lessons
     app.get("/lessons/public", async (req, res) => {
-  const page = parseInt(req.query.page) || 1;
-  const limit = parseInt(req.query.limit) || 6;
-  const skip = (page - 1) * limit;
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 6;
+      const skip = (page - 1) * limit;
+      const query = { privacy: "public" };
+      const total = await lessonsCollection.countDocuments(query);
+      const lessons = await lessonsCollection
+        .find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .toArray();
 
-  const query = { privacy: "public" };
+      res.send({
+        lessons,
+        total,
+        totalPages: Math.ceil(total / limit),
+        currentPage: page,
+      });
+    });
 
-  const total = await lessonsCollection.countDocuments(query);
+    // get single lesson
+    app.get("/lessons/public/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const cursor = await lessonsCollection.findOne(query);
 
-  const lessons = await lessonsCollection
-    .find(query)
-    .sort({ createdAt: -1 })
-    .skip(skip)
-    .limit(limit)
-    .toArray();
+      res.send(cursor);
+    });
 
-  res.send({
-    lessons,
-    total,
-    totalPages: Math.ceil(total / limit),
-    currentPage: page,
-  });
-});
-  
+    // post like api
+    app.patch("/lessons/like/:id", verifyFirebaseToken, async (req, res) => {
+      const lessonId = req.params.id;
+
+      const email = req.decoded_email;
+
+      const lesson = await lessonsCollection.findOne({
+        _id: new ObjectId(lessonId),
+      });
+
+      const alreadyLiked = lesson.likes?.includes(email);
+
+      const update = alreadyLiked
+        ? {
+            $pull: { likes: email },
+            $inc: { likesCount: -1 },
+          }
+        : {
+            $addToSet: { likes: email },
+            $inc: { likesCount: 1 },
+          };
+
+      await lessonsCollection.updateOne(
+        { _id: new ObjectId(lessonId) },
+        update
+      );
+
+      res.send({ liked: !alreadyLiked });
+    });
+
     // stripe payment integration
     app.post(
       "/create-checkout-session",
