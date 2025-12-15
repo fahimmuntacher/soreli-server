@@ -63,6 +63,7 @@ async function run() {
     const usersCollection = myDb.collection("users");
     const lessonsCollection = myDb.collection("lessons");
     const paymentsCollection = myDb.collection("payments");
+    const commentsCollection = myDb.collection("comments");
 
     // get user id by email helper function
     const getUserIdByEmail = async (email) => {
@@ -173,6 +174,28 @@ async function run() {
       );
 
       res.send({ liked: !alreadyLiked });
+    });
+
+    app.post("/lessons/:id/comments", verifyFirebaseToken, async (req, res) => {
+      const lessonId = req.params.id;
+      const email = req.decoded_email;
+      const { comment, userName, userPhoto } = req.body;
+
+      if (!comment?.trim()) {
+        return res.status(400).send({ message: "Comment required" });
+      }
+
+      const newComment = {
+        lessonId: new ObjectId(lessonId),
+        userEmail: email,
+        userName,
+        userPhoto,
+        comment,
+        createdAt: new Date(),
+      };
+
+      const result = await commentsCollection.insertOne(newComment);
+      res.send(result);
     });
 
     // stripe payment integration
