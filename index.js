@@ -64,6 +64,7 @@ async function run() {
     const lessonsCollection = myDb.collection("lessons");
     const paymentsCollection = myDb.collection("payments");
     const commentsCollection = myDb.collection("comments");
+    const reportsCollection = myDb.collection("reports");
 
     // get user id by email helper function
     const getUserIdByEmail = async (email) => {
@@ -176,6 +177,7 @@ async function run() {
       res.send({ liked: !alreadyLiked });
     });
 
+    // comment post api
     app.post("/lessons/:id/comments", verifyFirebaseToken, async (req, res) => {
       const lessonId = req.params.id;
       const email = req.decoded_email;
@@ -196,6 +198,91 @@ async function run() {
 
       const result = await commentsCollection.insertOne(newComment);
       res.send(result);
+    });
+
+    // comment get api
+    app.get("/lessons/:id/comments", async (req, res) => {
+      const lessonId = req.params.id;
+
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 5;
+      const skip = (page - 1) * limit;
+
+      const query = { lessonId: new ObjectId(lessonId) };
+
+      const total = await commentsCollection.countDocuments(query);
+
+      const comments = await commentsCollection
+        .find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .toArray();
+
+      res.send({
+        comments,
+        total,
+        totalPages: Math.ceil(total / limit),
+        currentPage: page,
+      });
+    });
+
+    // favourite lessons post api
+    app.patch("/lessons/favorite/:id", async (req, res) => {
+      const { email } = req.body;
+      const lessonId = req.params.id;
+
+      const userId = await getUserIdByEmail(email);
+
+      const lesson = await lessonsCollection.findOne({
+        _id: new ObjectId(lessonId),
+      });
+
+      const alreadySaved = lesson.favorites?.includes(userId.toString());
+
+      const update = alreadySaved
+        ? {
+            $pull: { favorites: userId.toString() },
+            $inc: { favoritesCount: -1 },
+          }
+        : {
+            $addToSet: { favorites: userId.toString() },
+            $inc: { favoritesCount: 1 },
+          };
+
+      await lessonsCollection.updateOne(
+        { _id: new ObjectId(lessonId) },
+        update
+      );
+
+      res.send({ saved: !alreadySaved });
+    });
+
+    // report api
+    app.post("/lessons/report/:id", verifyFirebaseToken, async (req, res) => {
+      const {  reason } = req.body;
+      const email = req.decoded_email;
+      const lessonId = req.params.id;
+
+      if (!email || !reason) {
+        return res.status(400).send({ message: "Missing data" });
+      }
+
+      const user = await usersCollection.findOne({ email });
+
+      if (!user) {
+        return res.status(404).send({ message: "User not found" });
+      }
+
+      await reportsCollection.insertOne({
+        lessonId: new ObjectId(lessonId),
+        reporterUserId: user._id,
+        reporterEmail: email,
+        reason,
+        createdAt: new Date(),
+      });
+
+      res.send({ message: "Reported successfully" });
     });
 
     // stripe payment integration
