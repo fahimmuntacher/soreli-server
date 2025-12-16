@@ -211,7 +211,7 @@ async function run() {
     // patch lesson access api
     app.patch("/lessons/:id/access", verifyFirebaseToken, async (req, res) => {
       const lessonId = req.params.id;
-      console.log("access level", lessonId);
+      // console.log("access level", lessonId);
       const email = req.decoded_email;
       const { access } = req.body;
 
@@ -388,6 +388,23 @@ async function run() {
 
       res.send(similarLessons);
     });
+
+    app.delete("/lessons/:id", verifyFirebaseToken, async (req, res) => {
+      const lessonId = req.params.id;
+      // console.log(lessonId);
+      const email = req.decoded_email;  
+      const lesson = await lessonsCollection.findOne({
+        _id: new ObjectId(lessonId),
+      });
+      if (!lesson || lesson.authorEmail !== email) {
+        return res.status(403).send({ message: "Forbidden access" });
+      }
+      const result = await lessonsCollection.deleteOne({
+        _id: new ObjectId(lessonId),
+      });
+      res.send(result);
+    }
+    );
 
     // get lesson by author email
     app.get("/my-lessons", verifyFirebaseToken, async (req, res) => {
