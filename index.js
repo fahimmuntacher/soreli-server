@@ -178,7 +178,10 @@ async function run() {
     });
 
     // patch lesson visibility api
-    app.patch("/lessons/:id/visibility", verifyFirebaseToken, async (req, res) => {
+    app.patch(
+      "/lessons/:id/visibility",
+      verifyFirebaseToken,
+      async (req, res) => {
         const lessonId = req.params.id;
         // console.log(lessonId);
         const email = req.decoded_email;
@@ -204,6 +207,39 @@ async function run() {
         res.send({ success: true });
       }
     );
+
+    // patch lesson access api
+    app.patch("/lessons/:id/access", verifyFirebaseToken, async (req, res) => {
+      const lessonId = req.params.id;
+      console.log("access level", lessonId);
+      const email = req.decoded_email;
+      const { access } = req.body;
+
+      if (!["free", "premium"].includes(access)) {
+        return res.status(400).send({ message: "Invalid access value" });
+      }
+
+      const user = await usersCollection.findOne({ email });
+
+      if (!user?.isPremium) {
+        return res.status(403).send({ message: "Premium required" });
+      }
+
+      const lesson = await lessonsCollection.findOne({
+        _id: new ObjectId(lessonId),
+      });
+
+      if (!lesson || lesson.authorEmail !== email) {
+        return res.status(403).send({ message: "Forbidden access" });
+      }
+
+      await lessonsCollection.updateOne(
+        { _id: new ObjectId(lessonId) },
+        { $set: { access } }
+      );
+
+      res.send({ success: true });
+    });
 
     // comment post api
     app.post("/lessons/:id/comments", verifyFirebaseToken, async (req, res) => {
