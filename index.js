@@ -138,6 +138,30 @@ async function run() {
       });
     });
 
+    app.get("/lessons/by-user", verifyFirebaseToken, async (req, res) => {
+      try {
+        const email = req.query.email;
+        // console.log(email);
+
+        if (email !== req.decoded_email) {
+          return res.status(403).send({ message: "Forbidden access" });
+        }
+        const lessons = await lessonsCollection
+          .find({ authorEmail: email })
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.send({
+          success: true,
+          lessons,
+        });
+      } catch (error) {
+        res
+          .status(500)
+          .send({ success: false, message: "Failed to fetch lessons" });
+      }
+    });
+
     // get single lesson
     app.get("/lessons/public/:id", async (req, res) => {
       const id = req.params.id;
@@ -175,6 +199,24 @@ async function run() {
       );
 
       res.send({ liked: !alreadyLiked });
+    });
+
+    // update lesson api
+    app.put("/lessons/:id", verifyFirebaseToken, async (req, res) => {
+      const lessonId = req.params.id;
+      const email = req.decoded_email;
+      const updatedLesson = req.body;
+      const lesson = await lessonsCollection.findOne({
+        _id: new ObjectId(lessonId),
+      });
+      if (!lesson || lesson.authorEmail !== email) {
+        return res.status(403).send({ message: "Forbidden access" });
+      }
+      await lessonsCollection.updateOne(
+        { _id: new ObjectId(lessonId) },
+        { $set: updatedLesson }
+      );
+      res.send({ success: true });
     });
 
     // patch lesson visibility api
@@ -326,6 +368,88 @@ async function run() {
       }
     );
 
+    // get favourite lessons with filters
+    app.get("/lessons/favorites", verifyFirebaseToken, async (req, res) => {
+      try {
+        const { email, category, tone } = req.query;
+        // console.log(email, category, tone);
+
+        // security check
+        if (email !== req.decoded_email) {
+          return res.status(403).send({ message: "Forbidden access" });
+        }
+
+        // base query
+        const query = {
+          favorites: email,
+          privacy: "public",
+        };
+
+        // optional filters
+        if (category && category !== "all") {
+          query.category = category;
+        }
+
+        if (tone && tone !== "all") {
+          query.tone = tone;
+        }
+
+        const favorites = await lessonsCollection
+          .find(query)
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.send(favorites);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Failed to load favorites" });
+      }
+    });
+
+    // delte favourite lesson api
+    const { ObjectId } = require("mongodb");
+
+    app.patch(
+      "/lessons/remove-favorite/:id",
+      verifyFirebaseToken,
+      async (req, res) => {
+        try {
+          const lessonId = req.params.id;
+          const { email } = req.body;
+
+          if (email !== req.decoded_email) {
+            return res.status(403).send({ message: "Forbidden access" });
+          }
+
+          const filter = { _id: new ObjectId(lessonId) };
+          const lesson = await lessonsCollection.findOne(filter);
+
+          if (!lesson) {
+            return res.status(404).send({ message: "Lesson not found" });
+          }
+
+          // check if already not in favorites
+          if (!lesson.favorites?.includes(email)) {
+            return res.send({
+              message: "Lesson already removed from favorites",
+            });
+          }
+
+          const update = {
+            $pull: { favorites: email },
+            $inc: { favoritesCount: -1 },
+          };
+
+          await lessonsCollection.updateOne(filter, update);
+
+          res.send({ success: true });
+        } catch (error) {
+          console.error(error);
+          res.status(500).send({ message: "Failed to remove favorite" });
+        }
+      }
+    );
+
     // report api
     app.post("/lessons/report/:id", verifyFirebaseToken, async (req, res) => {
       const { reason } = req.body;
@@ -389,10 +513,11 @@ async function run() {
       res.send(similarLessons);
     });
 
+    // delete lesson api
     app.delete("/lessons/:id", verifyFirebaseToken, async (req, res) => {
       const lessonId = req.params.id;
       // console.log(lessonId);
-      const email = req.decoded_email;  
+      const email = req.decoded_email;
       const lesson = await lessonsCollection.findOne({
         _id: new ObjectId(lessonId),
       });
@@ -403,8 +528,24 @@ async function run() {
         _id: new ObjectId(lessonId),
       });
       res.send(result);
-    }
-    );
+    });
+
+    // get favourite lessons
+    app.get("/lessons/favorites", verifyFirebaseToken, async (req, res) => {
+      const email = req.query.email;
+      if (email !== req.decoded_email) {
+        return res.status(403).send({ message: "Forbidden access" });
+      }
+      const favorites = await lessonsCollection
+        .find({
+          favorites: email,
+          privacy: "public",
+        })
+        .sort({ createdAt: -1 })
+        .toArray();
+
+      res.send(favorites);
+    });
 
     // get lesson by author email
     app.get("/my-lessons", verifyFirebaseToken, async (req, res) => {
@@ -474,7 +615,7 @@ async function run() {
           // console.log("Session ID:", sessionId);
 
           const session = await stripe.checkout.sessions.retrieve(sessionId);
-          console.log(session);
+          // console.log(session);
           const transactionId = session.payment_intent;
 
           // Check if transaction already exists
