@@ -177,6 +177,34 @@ async function run() {
       res.send({ liked: !alreadyLiked });
     });
 
+    // patch lesson visibility api
+    app.patch("/lessons/:id/visibility", verifyFirebaseToken, async (req, res) => {
+        const lessonId = req.params.id;
+        // console.log(lessonId);
+        const email = req.decoded_email;
+        const { privacy } = req.body;
+
+        if (!["public", "private"].includes(privacy)) {
+          return res.status(400).send({ message: "Invalid privacy value" });
+        }
+
+        const lesson = await lessonsCollection.findOne({
+          _id: new ObjectId(lessonId),
+        });
+
+        if (!lesson || lesson.authorEmail !== email) {
+          return res.status(403).send({ message: "Forbidden access" });
+        }
+
+        await lessonsCollection.updateOne(
+          { _id: new ObjectId(lessonId) },
+          { $set: { privacy } }
+        );
+
+        res.send({ success: true });
+      }
+    );
+
     // comment post api
     app.post("/lessons/:id/comments", verifyFirebaseToken, async (req, res) => {
       const lessonId = req.params.id;
@@ -328,7 +356,11 @@ async function run() {
     // get lesson by author email
     app.get("/my-lessons", verifyFirebaseToken, async (req, res) => {
       const email = req.query.email;
-      // console.log(email);
+
+      if (email !== req.decoded_email) {
+        return res.status(403).send({ message: "Forbidden access" });
+      }
+
       const lessons = await lessonsCollection
         .find({ authorEmail: email })
         .sort({ createdAt: -1 })
