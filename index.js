@@ -162,6 +162,92 @@ async function run() {
       }
     );
 
+    // admin stats get
+    // app.get(
+    //   "/admin/stats",
+    //   verifyFirebaseToken,
+    //   verifyAdmin,
+    //   async (req, res) => {
+    //     try {
+    //       const today = new Date();
+    //       today.setHours(0, 0, 0, 0);
+
+    //       const [result] = await usersCollection
+    //         .aggregate([
+    //           {
+    //             $facet: {
+    //               totalUsers: [{ $count: "count" }],
+
+    //               totalLessons: [
+    //                 {
+    //                   $lookup: {
+    //                     from: "lessons",
+    //                     pipeline: [
+    //                       { $match: { privacy: "public" } },
+    //                       { $count: "count" },
+    //                     ],
+    //                     as: "lessons",
+    //                   },
+    //                 },
+    //               ],
+
+    //               reportedLessons: [
+    //                 {
+    //                   $lookup: {
+    //                     from: "reports",
+    //                     pipeline: [
+    //                       { $match: { isReported: true } },
+    //                       { $count: "count" },
+    //                     ],
+    //                     as: "reported",
+    //                   },
+    //                 },
+    //               ],
+
+    //               todayLessons: [
+    //                 {
+    //                   $lookup: {
+    //                     from: "lessons",
+    //                     pipeline: [
+    //                       { $match: { createdAt: { $gte: today } } },
+    //                       { $count: "count" },
+    //                     ],
+    //                     as: "today",
+    //                   },
+    //                 },
+    //               ],
+    //             },
+    //           },
+    //           {
+    //             $project: {
+    //               totalUsers: { $arrayElemAt: ["$totalUsers.count", 0] },
+    //               totalLessons: {
+    //                 $arrayElemAt: ["$totalLessons.lessons.count", 0],
+    //               },
+    //               reportedLessons: {
+    //                 $arrayElemAt: ["$reportedLessons.reported.count", 0],
+    //               },
+    //               todayLessons: {
+    //                 $arrayElemAt: ["$todayLessons.today.count", 0],
+    //               },
+    //             },
+    //           },
+    //         ])
+    //         .toArray();
+
+    //       res.send({
+    //         totalUsers: result.totalUsers || 0,
+    //         totalLessons: result.totalLessons || 0,
+    //         reportedLessons: result.reportedLessons || 0,
+    //         todayLessons: result.todayLessons || 0,
+    //       });
+    //     } catch (error) {
+    //       console.error("ADMIN STATS ERROR:", error);
+    //       res.status(500).send({ message: "Failed to load admin stats" });
+    //     }
+    //   }
+    // );
+
     app.get(
       "/admin/stats",
       verifyFirebaseToken,
@@ -171,78 +257,147 @@ async function run() {
           const today = new Date();
           today.setHours(0, 0, 0, 0);
 
-          const [result] = await usersCollection
+          const [totalUsers, totalLessons, reportedLessons, todayLessons] =
+            await Promise.all([
+              usersCollection.countDocuments(),
+              lessonsCollection.countDocuments({ privacy: "public" }),
+              reportsCollection.countDocuments(),
+              lessonsCollection.countDocuments({ createdAt: { $gte: today } }),
+            ]);
+
+          res.send({
+            totalUsers,
+            totalLessons,
+            reportedLessons,
+            todayLessons,
+          });
+        } catch (error) {
+          console.error("ADMIN STATS ERROR:", error);
+          res.status(500).send({ message: "Failed to load admin stats" });
+        }
+      }
+    );
+
+    // lesson growth data for admin
+    app.get(
+      "/admin/lesson-growth",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const data = await lessonsCollection
             .aggregate([
               {
-                $facet: {
-                  totalUsers: [{ $count: "count" }],
-
-                  totalLessons: [
-                    {
-                      $lookup: {
-                        from: "lessons",
-                        pipeline: [
-                          { $match: { privacy: "public" } },
-                          { $count: "count" },
-                        ],
-                        as: "lessons",
-                      },
+                $group: {
+                  _id: {
+                    $dateToString: {
+                      format: "%Y-%m-%d",
+                      date: "$createdAt",
                     },
-                  ],
-
-                  reportedLessons: [
-                    {
-                      $lookup: {
-                        from: "lessons",
-                        pipeline: [
-                          { $match: { isReported: true } },
-                          { $count: "count" },
-                        ],
-                        as: "reported",
-                      },
-                    },
-                  ],
-
-                  todayLessons: [
-                    {
-                      $lookup: {
-                        from: "lessons",
-                        pipeline: [
-                          { $match: { createdAt: { $gte: today } } },
-                          { $count: "count" },
-                        ],
-                        as: "today",
-                      },
-                    },
-                  ],
+                  },
+                  lessons: { $sum: 1 },
                 },
               },
+              { $sort: { _id: 1 } },
               {
                 $project: {
-                  totalUsers: { $arrayElemAt: ["$totalUsers.count", 0] },
-                  totalLessons: {
-                    $arrayElemAt: ["$totalLessons.lessons.count", 0],
-                  },
-                  reportedLessons: {
-                    $arrayElemAt: ["$reportedLessons.reported.count", 0],
-                  },
-                  todayLessons: {
-                    $arrayElemAt: ["$todayLessons.today.count", 0],
-                  },
+                  date: "$_id",
+                  lessons: 1,
+                  _id: 0,
                 },
               },
             ])
             .toArray();
 
-          res.send({
-            totalUsers: result.totalUsers || 0,
-            totalLessons: result.totalLessons || 0,
-            reportedLessons: result.reportedLessons || 0,
-            todayLessons: result.todayLessons || 0,
-          });
+          res.send(data);
         } catch (error) {
-          console.error("ADMIN STATS ERROR:", error);
-          res.status(500).send({ message: "Failed to load admin stats" });
+          console.error("LESSON GROWTH ERROR:", error);
+          res.status(500).send({ message: "Failed to load lesson growth" });
+        }
+      }
+    );
+
+    // user growth data for admin
+    app.get(
+      "/admin/user-growth",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const data = await usersCollection
+            .aggregate([
+              {
+                $group: {
+                  _id: {
+                    $dateToString: {
+                      format: "%Y-%m-%d",
+                      date: "$createdAt",
+                    },
+                  },
+                  users: { $sum: 1 },
+                },
+              },
+              { $sort: { _id: 1 } },
+              {
+                $project: {
+                  date: "$_id",
+                  users: 1,
+                  _id: 0,
+                },
+              },
+            ])
+            .toArray();
+
+          res.send(data);
+        } catch (error) {
+          console.error("USER GROWTH ERROR:", error);
+          res.status(500).send({ message: "Failed to load user growth" });
+        }
+      }
+    );
+
+    // top contributors for admin
+    app.get(
+      "/admin/top-contributors",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const contributors = await lessonsCollection
+            .aggregate([
+              {
+                $group: {
+                  _id: "$authorEmail",
+                  lessonsCount: { $sum: 1 },
+                },
+              },
+              { $sort: { lessonsCount: -1 } },
+              { $limit: 5 },
+              {
+                $lookup: {
+                  from: "users",
+                  localField: "_id",
+                  foreignField: "email",
+                  as: "user",
+                },
+              },
+              { $unwind: "$user" },
+              {
+                $project: {
+                  email: "$_id",
+                  name: "$user.name",
+                  photoURL: "$user.photoURL",
+                  lessonsCount: 1,
+                  _id: 0,
+                },
+              },
+            ])
+            .toArray();
+
+          res.send(contributors);
+        } catch (error) {
+          console.error("TOP CONTRIBUTORS ERROR:", error);
+          res.status(500).send({ message: "Failed to load contributors" });
         }
       }
     );
