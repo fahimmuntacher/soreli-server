@@ -99,6 +99,70 @@ async function run() {
       res.send({ role: user?.role, isPremium: user?.isPremium });
     });
 
+    // user profile get
+   app.get("/lessons/by-user/paginated", verifyFirebaseToken, async (req, res) => {
+  try {
+    const email = req.decoded_email;
+
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 8;
+    const skip = (page - 1) * limit;
+
+    // security check
+    if (email !== req.query.email) {
+      return res.status(403).send({ message: "Forbidden access" });
+    }
+
+    const total = await lessonsCollection.countDocuments({
+      authorEmail: email,
+    });
+
+    const lessons = await lessonsCollection
+      .find({ authorEmail: email })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .project({
+        title: 1,
+        category: 1,
+        tone: 1,
+        createdAt: 1,
+        image: 1,
+      })
+      .toArray();
+
+    res.send({
+      success: true,
+      lessons,
+      pagination: {
+        total,
+        page,
+        totalPages: Math.ceil(total / limit),
+      },
+    });
+  } catch (error) {
+    console.error("PAGINATED LESSON ERROR:", error);
+    res.status(500).send({ message: "Failed to fetch lessons" });
+  }
+});
+
+
+    // user profile update
+
+    app.patch("/user/:email", verifyFirebaseToken, async (req, res) => {
+      const email = req.params.email;
+      const updatedData = req.body;
+
+      if (email !== req.decoded_email) {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+      const result = await usersCollection.updateOne(
+        { email },
+        { $set: updatedData }
+      );
+      res.send(result);
+    });
+
     // lessons API
 
     // lessons post
@@ -138,6 +202,7 @@ async function run() {
       });
     });
 
+    // get lessons by user email
     app.get("/lessons/by-user", verifyFirebaseToken, async (req, res) => {
       try {
         const email = req.query.email;
@@ -409,6 +474,7 @@ async function run() {
     // delte favourite lesson api
     const { ObjectId } = require("mongodb");
 
+    // remove favorite lesson api
     app.patch(
       "/lessons/remove-favorite/:id",
       verifyFirebaseToken,
