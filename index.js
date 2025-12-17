@@ -717,7 +717,7 @@ async function run() {
       res.send({ message: "Reported successfully" });
     });
 
-    // get api
+    // get reports post api
     app.get(
       "/admin/reported-lessons",
       verifyFirebaseToken,
@@ -767,6 +767,22 @@ async function run() {
           console.error(error);
           res.status(500).send({ message: "Failed to fetch reported lessons" });
         }
+      }
+    );
+
+    // update reports
+    app.patch(
+      "/admin/reported-lessons/:lessonId/ignore",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        const { lessonId } = req.params;
+
+        await reportsCollection.deleteMany({
+          lessonId: new ObjectId(lessonId),
+        });
+
+        res.send({ success: true });
       }
     );
 
