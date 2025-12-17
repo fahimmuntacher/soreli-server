@@ -76,6 +76,18 @@ async function run() {
       return user?._id || null;
     };
 
+    // admin verify middlewear
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.decoded_email;
+      const user = await usersCollection.findOne({ email });
+
+      if (user?.role !== "admin") {
+        return res.status(403).send({ message: "Admin access only" });
+      }
+
+      next();
+    };
+
     // users post
     app.post("/users", async (req, res) => {
       const usersDetail = req.body;
@@ -100,52 +112,140 @@ async function run() {
     });
 
     // user profile get
-   app.get("/lessons/by-user/paginated", verifyFirebaseToken, async (req, res) => {
-  try {
-    const email = req.decoded_email;
+    app.get(
+      "/lessons/by-user/paginated",
+      verifyFirebaseToken,
+      async (req, res) => {
+        try {
+          const email = req.decoded_email;
 
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 8;
-    const skip = (page - 1) * limit;
+          const page = parseInt(req.query.page) || 1;
+          const limit = parseInt(req.query.limit) || 8;
+          const skip = (page - 1) * limit;
 
-    // security check
-    if (email !== req.query.email) {
-      return res.status(403).send({ message: "Forbidden access" });
-    }
+          // security check
+          if (email !== req.query.email) {
+            return res.status(403).send({ message: "Forbidden access" });
+          }
 
-    const total = await lessonsCollection.countDocuments({
-      authorEmail: email,
-    });
+          const total = await lessonsCollection.countDocuments({
+            authorEmail: email,
+          });
 
-    const lessons = await lessonsCollection
-      .find({ authorEmail: email })
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .project({
-        title: 1,
-        category: 1,
-        tone: 1,
-        createdAt: 1,
-        image: 1,
-      })
-      .toArray();
+          const lessons = await lessonsCollection
+            .find({ authorEmail: email })
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limit)
+            .project({
+              title: 1,
+              category: 1,
+              tone: 1,
+              createdAt: 1,
+              image: 1,
+            })
+            .toArray();
 
-    res.send({
-      success: true,
-      lessons,
-      pagination: {
-        total,
-        page,
-        totalPages: Math.ceil(total / limit),
-      },
-    });
-  } catch (error) {
-    console.error("PAGINATED LESSON ERROR:", error);
-    res.status(500).send({ message: "Failed to fetch lessons" });
-  }
-});
+          res.send({
+            success: true,
+            lessons,
+            pagination: {
+              total,
+              page,
+              totalPages: Math.ceil(total / limit),
+            },
+          });
+        } catch (error) {
+          console.error("PAGINATED LESSON ERROR:", error);
+          res.status(500).send({ message: "Failed to fetch lessons" });
+        }
+      }
+    );
 
+    app.get(
+      "/admin/stats",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+
+          const [result] = await usersCollection
+            .aggregate([
+              {
+                $facet: {
+                  totalUsers: [{ $count: "count" }],
+
+                  totalLessons: [
+                    {
+                      $lookup: {
+                        from: "lessons",
+                        pipeline: [
+                          { $match: { privacy: "public" } },
+                          { $count: "count" },
+                        ],
+                        as: "lessons",
+                      },
+                    },
+                  ],
+
+                  reportedLessons: [
+                    {
+                      $lookup: {
+                        from: "lessons",
+                        pipeline: [
+                          { $match: { isReported: true } },
+                          { $count: "count" },
+                        ],
+                        as: "reported",
+                      },
+                    },
+                  ],
+
+                  todayLessons: [
+                    {
+                      $lookup: {
+                        from: "lessons",
+                        pipeline: [
+                          { $match: { createdAt: { $gte: today } } },
+                          { $count: "count" },
+                        ],
+                        as: "today",
+                      },
+                    },
+                  ],
+                },
+              },
+              {
+                $project: {
+                  totalUsers: { $arrayElemAt: ["$totalUsers.count", 0] },
+                  totalLessons: {
+                    $arrayElemAt: ["$totalLessons.lessons.count", 0],
+                  },
+                  reportedLessons: {
+                    $arrayElemAt: ["$reportedLessons.reported.count", 0],
+                  },
+                  todayLessons: {
+                    $arrayElemAt: ["$todayLessons.today.count", 0],
+                  },
+                },
+              },
+            ])
+            .toArray();
+
+          res.send({
+            totalUsers: result.totalUsers || 0,
+            totalLessons: result.totalLessons || 0,
+            reportedLessons: result.reportedLessons || 0,
+            todayLessons: result.todayLessons || 0,
+          });
+        } catch (error) {
+          console.error("ADMIN STATS ERROR:", error);
+          res.status(500).send({ message: "Failed to load admin stats" });
+        }
+      }
+    );
 
     // user profile update
 
