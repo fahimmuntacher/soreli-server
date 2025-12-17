@@ -8,7 +8,10 @@ const stripe = require("stripe")(`${process.env.STRIPE_KEY}`);
 const admin = require("firebase-admin");
 const port = 3000;
 
-var serviceAccount = require("./firebase_admin_sdk_key.json");
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString(
+  "utf8"
+);
+const serviceAccount = JSON.parse(decoded);
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -163,90 +166,6 @@ async function run() {
     );
 
     // admin stats get
-    // app.get(
-    //   "/admin/stats",
-    //   verifyFirebaseToken,
-    //   verifyAdmin,
-    //   async (req, res) => {
-    //     try {
-    //       const today = new Date();
-    //       today.setHours(0, 0, 0, 0);
-
-    //       const [result] = await usersCollection
-    //         .aggregate([
-    //           {
-    //             $facet: {
-    //               totalUsers: [{ $count: "count" }],
-
-    //               totalLessons: [
-    //                 {
-    //                   $lookup: {
-    //                     from: "lessons",
-    //                     pipeline: [
-    //                       { $match: { privacy: "public" } },
-    //                       { $count: "count" },
-    //                     ],
-    //                     as: "lessons",
-    //                   },
-    //                 },
-    //               ],
-
-    //               reportedLessons: [
-    //                 {
-    //                   $lookup: {
-    //                     from: "reports",
-    //                     pipeline: [
-    //                       { $match: { isReported: true } },
-    //                       { $count: "count" },
-    //                     ],
-    //                     as: "reported",
-    //                   },
-    //                 },
-    //               ],
-
-    //               todayLessons: [
-    //                 {
-    //                   $lookup: {
-    //                     from: "lessons",
-    //                     pipeline: [
-    //                       { $match: { createdAt: { $gte: today } } },
-    //                       { $count: "count" },
-    //                     ],
-    //                     as: "today",
-    //                   },
-    //                 },
-    //               ],
-    //             },
-    //           },
-    //           {
-    //             $project: {
-    //               totalUsers: { $arrayElemAt: ["$totalUsers.count", 0] },
-    //               totalLessons: {
-    //                 $arrayElemAt: ["$totalLessons.lessons.count", 0],
-    //               },
-    //               reportedLessons: {
-    //                 $arrayElemAt: ["$reportedLessons.reported.count", 0],
-    //               },
-    //               todayLessons: {
-    //                 $arrayElemAt: ["$todayLessons.today.count", 0],
-    //               },
-    //             },
-    //           },
-    //         ])
-    //         .toArray();
-
-    //       res.send({
-    //         totalUsers: result.totalUsers || 0,
-    //         totalLessons: result.totalLessons || 0,
-    //         reportedLessons: result.reportedLessons || 0,
-    //         todayLessons: result.todayLessons || 0,
-    //       });
-    //     } catch (error) {
-    //       console.error("ADMIN STATS ERROR:", error);
-    //       res.status(500).send({ message: "Failed to load admin stats" });
-    //     }
-    //   }
-    // );
 
     app.get(
       "/admin/stats",
@@ -797,6 +716,59 @@ async function run() {
 
       res.send({ message: "Reported successfully" });
     });
+
+    // get api
+    app.get(
+      "/admin/reported-lessons",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const result = await reportsCollection
+            .aggregate([
+              {
+                $group: {
+                  _id: "$lessonId",
+                  reportCount: { $sum: 1 },
+                  reports: {
+                    $push: {
+                      reason: "$reason",
+                      reporterEmail: "$reporterEmail",
+                      createdAt: "$createdAt",
+                    },
+                  },
+                },
+              },
+              {
+                $lookup: {
+                  from: "lessons",
+                  localField: "_id",
+                  foreignField: "_id",
+                  as: "lesson",
+                },
+              },
+              { $unwind: "$lesson" },
+              {
+                $project: {
+                  lessonId: "$_id",
+                  reportCount: 1,
+                  reports: 1,
+                  title: "$lesson.title",
+                  authorEmail: "$lesson.authorEmail",
+                  createdAt: "$lesson.createdAt",
+                },
+              },
+              { $sort: { reportCount: -1 } },
+            ])
+            .toArray();
+
+          res.send(result);
+        } catch (error) {
+          console.error(error);
+          res.status(500).send({ message: "Failed to fetch reported lessons" });
+        }
+      }
+    );
 
     // get similar lessons
     app.get("/lessons/similar/:id", async (req, res) => {
