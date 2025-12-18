@@ -1130,6 +1130,65 @@ async function run() {
       }
     );
 
+    // admin profile get
+    app.get(
+      "/admin/profile",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        const email = req.decoded_email;
+
+        const admin = await usersCollection.findOne({ email });
+
+        const moderatedCount = await lessonsCollection.countDocuments({
+          reviewedBy: email,
+        });
+
+        const actionCount = moderatedCount;
+
+        res.send({
+          name: admin.name,
+          email: admin.email,
+          photoURL: admin.photoURL,
+          role: admin.role,
+          moderatedCount,
+          actionCount,
+        });
+      }
+    );
+
+    // admin profile update
+    app.patch(
+      "/admin/profile",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        const email = req.decoded_email;
+        const { name, photoURL } = req.body;
+
+        await usersCollection.updateOne(
+          { email },
+          { $set: { name, photoURL } }
+        );
+
+        res.send({ success: true });
+      }
+    );
+
+    // get featured post
+    app.get("/lessons/featured", async (req, res) => {
+      const lessons = await lessonsCollection
+        .find({
+          isFeatured: true,
+          privacy: "public",
+        })
+        .sort({ featuredAt: -1 })
+        .limit(8)
+        .toArray();
+
+      res.send(lessons);
+    });
+
     // stripe payment integration
     app.post(
       "/create-checkout-session",
