@@ -896,24 +896,16 @@ async function run() {
       verifyAdmin,
       async (req, res) => {
         try {
-          const {
-            category,
-            privacy,
-            reported,
-            page = 1,
-            limit = 10,
-          } = req.query;
+          const { category, reported, page = 1, limit = 10 } = req.query;
 
           const skip = (page - 1) * limit;
 
-          const match = {};
+          const match = {
+            privacy: "public",
+          };
 
           if (category && category !== "all") {
             match.category = category;
-          }
-
-          if (privacy) {
-            match.privacy = privacy;
           }
 
           const pipeline = [
@@ -925,16 +917,25 @@ async function run() {
                 as: "reports",
               },
             },
+
             {
               $addFields: {
                 reportCount: { $size: "$reports" },
               },
             },
+
+            // 🔹 Filter reported lessons if requested
             ...(reported === "true"
               ? [{ $match: { reportCount: { $gt: 0 } } }]
               : []),
+
+            // 🔹 Apply main filters (public + category)
             { $match: match },
+
+            // 🔹 Sort latest first
             { $sort: { createdAt: -1 } },
+
+            // 🔹 Pagination + total count
             {
               $facet: {
                 data: [
@@ -965,6 +966,7 @@ async function run() {
             total: result[0].total[0]?.count || 0,
           });
         } catch (err) {
+          console.error(err);
           res.status(500).send({ message: "Failed to load lessons" });
         }
       }
@@ -1012,6 +1014,118 @@ async function run() {
           { _id: new ObjectId(req.params.id) },
           { $set: { isFeatured: true } }
         );
+        res.send({ success: true });
+      }
+    );
+
+    // admin user api
+    app.get(
+      "/admin/users",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { page = 1, limit = 10, search = "" } = req.query;
+          const skip = (page - 1) * limit;
+
+          const match = search
+            ? { email: { $regex: search, $options: "i" } }
+            : {};
+
+          const pipeline = [
+            { $match: match },
+            {
+              $lookup: {
+                from: "lessons",
+                let: { userEmail: "$email" },
+                pipeline: [
+                  {
+                    $match: {
+                      $expr: {
+                        $and: [
+                          { $eq: ["$authorEmail", "$$userEmail"] },
+                          { $eq: ["$privacy", "public"] },
+                        ],
+                      },
+                    },
+                  },
+                ],
+                as: "lessons",
+              },
+            },
+            {
+              $addFields: {
+                totalLessons: { $size: "$lessons" },
+              },
+            },
+            {
+              $project: {
+                name: 1,
+                email: 1,
+                role: 1,
+                totalLessons: 1,
+                createdAt: 1,
+              },
+            },
+            { $sort: { createdAt: -1 } },
+            {
+              $facet: {
+                users: [{ $skip: skip }, { $limit: Number(limit) }],
+                total: [{ $count: "count" }],
+              },
+            },
+          ];
+
+          const result = await usersCollection.aggregate(pipeline).toArray();
+
+          res.send({
+            users: result[0].users,
+            total: result[0].total[0]?.count || 0,
+          });
+        } catch (err) {
+          res.status(500).send({ message: "Failed to load users" });
+        }
+      }
+    );
+
+    // promote user api
+    app.patch(
+      "/admin/users/:id/promote",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        await usersCollection.updateOne(
+          { _id: new ObjectId(req.params.id) },
+          { $set: { role: "admin" } }
+        );
+        res.send({ success: true });
+      }
+    );
+
+    // demote admin
+    app.patch(
+      "/admin/users/:id/demote",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        await usersCollection.updateOne(
+          { _id: new ObjectId(req.params.id) },
+          { $set: { role: "user" } }
+        );
+        res.send({ success: true });
+      }
+    );
+
+    // delte user by admin
+    app.delete(
+      "/admin/users/:id",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        await usersCollection.deleteOne({
+          _id: new ObjectId(req.params.id),
+        });
+
         res.send({ success: true });
       }
     );
