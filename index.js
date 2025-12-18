@@ -645,9 +645,6 @@ async function run() {
       }
     });
 
-    // delte favourite lesson api
-    const { ObjectId } = require("mongodb");
-
     // remove favorite lesson api
     app.patch(
       "/lessons/remove-favorite/:id",
@@ -786,6 +783,26 @@ async function run() {
       }
     );
 
+    // delte lesson based on reports
+    app.delete(
+      "/admin/reported-lessons/:lessonId",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        const { lessonId } = req.params;
+
+        await lessonsCollection.deleteOne({
+          _id: new ObjectId(lessonId),
+        });
+
+        await reportsCollection.deleteMany({
+          lessonId: new ObjectId(lessonId),
+        });
+
+        res.send({ success: true });
+      }
+    );
+
     // get similar lessons
     app.get("/lessons/similar/:id", async (req, res) => {
       const lessonId = req.params.id;
@@ -871,6 +888,133 @@ async function run() {
 
       res.send(lessons);
     });
+
+    // admin lesson
+    app.get(
+      "/admin/lessons",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const {
+            category,
+            privacy,
+            reported,
+            page = 1,
+            limit = 10,
+          } = req.query;
+
+          const skip = (page - 1) * limit;
+
+          const match = {};
+
+          if (category && category !== "all") {
+            match.category = category;
+          }
+
+          if (privacy) {
+            match.privacy = privacy;
+          }
+
+          const pipeline = [
+            {
+              $lookup: {
+                from: "reports",
+                localField: "_id",
+                foreignField: "lessonId",
+                as: "reports",
+              },
+            },
+            {
+              $addFields: {
+                reportCount: { $size: "$reports" },
+              },
+            },
+            ...(reported === "true"
+              ? [{ $match: { reportCount: { $gt: 0 } } }]
+              : []),
+            { $match: match },
+            { $sort: { createdAt: -1 } },
+            {
+              $facet: {
+                data: [
+                  { $skip: skip },
+                  { $limit: Number(limit) },
+                  {
+                    $project: {
+                      title: 1,
+                      authorEmail: 1,
+                      category: 1,
+                      privacy: 1,
+                      isFeatured: 1,
+                      isReviewed: 1,
+                      reportCount: 1,
+                      createdAt: 1,
+                    },
+                  },
+                ],
+                total: [{ $count: "count" }],
+              },
+            },
+          ];
+
+          const result = await lessonsCollection.aggregate(pipeline).toArray();
+
+          res.send({
+            lessons: result[0].data,
+            total: result[0].total[0]?.count || 0,
+          });
+        } catch (err) {
+          res.status(500).send({ message: "Failed to load lessons" });
+        }
+      }
+    );
+
+    // lesson review by admin
+    app.patch(
+      "/admin/lessons/:id/review",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        await lessonsCollection.updateOne(
+          { _id: new ObjectId(req.params.id) },
+          { $set: { isReviewed: true } }
+        );
+        res.send({ success: true });
+      }
+    );
+
+    // delete lesson by admin
+    app.delete(
+      "/admin/lessons/:id",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        const lessonId = new ObjectId(req.params.id);
+
+        await Promise.all([
+          lessonsCollection.deleteOne({ _id: lessonId }),
+          reportsCollection.deleteMany({ lessonId }),
+          commentsCollection.deleteMany({ lessonId }),
+        ]);
+
+        res.send({ success: true });
+      }
+    );
+
+    // lesson feature make
+    app.patch(
+      "/admin/lessons/:id/feature",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        await lessonsCollection.updateOne(
+          { _id: new ObjectId(req.params.id) },
+          { $set: { isFeatured: true } }
+        );
+        res.send({ success: true });
+      }
+    );
 
     // stripe payment integration
     app.post(
