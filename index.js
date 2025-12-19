@@ -276,50 +276,46 @@ async function run() {
     );
 
     // top contributors for admin
-    app.get(
-      "/admin/top-contributors",
-      verifyFirebaseToken,
-      verifyAdmin,
-      async (req, res) => {
-        try {
-          const contributors = await lessonsCollection
-            .aggregate([
-              {
-                $group: {
-                  _id: "$authorEmail",
-                  lessonsCount: { $sum: 1 },
-                },
+    app.get("/admin/top-contributors", async (req, res) => {
+      try {
+        const contributors = await lessonsCollection
+          .aggregate([
+            {
+              $group: {
+                _id: "$authorEmail",
+                lessonsCount: { $sum: 1 },
               },
-              { $sort: { lessonsCount: -1 } },
-              { $limit: 5 },
-              {
-                $lookup: {
-                  from: "users",
-                  localField: "_id",
-                  foreignField: "email",
-                  as: "user",
-                },
+            },
+            { $sort: { lessonsCount: -1 } },
+            { $limit: 5 },
+            {
+              $lookup: {
+                from: "users",
+                localField: "_id",
+                foreignField: "email",
+                as: "user",
               },
-              { $unwind: "$user" },
-              {
-                $project: {
-                  email: "$_id",
-                  name: "$user.name",
-                  photoURL: "$user.photoURL",
-                  lessonsCount: 1,
-                  _id: 0,
-                },
+            },
+            { $unwind: "$user" },
+            {
+              $project: {
+                email: "$_id",
+                name: "$user.name",
+                photoURL: "$user.photoURL",
+                lessonsCount: 1,
+                _id: 0,
               },
-            ])
-            .toArray();
+            },
+          ])
+          .limit(5)
+          .toArray();
 
-          res.send(contributors);
-        } catch (error) {
-          console.error("TOP CONTRIBUTORS ERROR:", error);
-          res.status(500).send({ message: "Failed to load contributors" });
-        }
+        res.send(contributors);
+      } catch (error) {
+        console.error("TOP CONTRIBUTORS ERROR:", error);
+        res.status(500).send({ message: "Failed to load contributors" });
       }
-    );
+    });
 
     // user profile update
 
@@ -356,24 +352,40 @@ async function run() {
 
     // get all lessons
     app.get("/lessons/public", async (req, res) => {
-      const page = parseInt(req.query.page) || 1;
-      const limit = parseInt(req.query.limit) || 6;
-      const skip = (page - 1) * limit;
-      const query = { privacy: "public" };
-      const total = await lessonsCollection.countDocuments(query);
-      const lessons = await lessonsCollection
-        .find(query)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .toArray();
+      try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 6;
+        const skip = (page - 1) * limit;
 
-      res.send({
-        lessons,
-        total,
-        totalPages: Math.ceil(total / limit),
-        currentPage: page,
-      });
+        const { search = "", category, tone } = req.query;
+
+        const query = {
+          privacy: "public",
+          ...(search && {
+            title: { $regex: search, $options: "i" },
+          }),
+          ...(category && { category }),
+          ...(tone && { tone }),
+        };
+
+        const total = await lessonsCollection.countDocuments(query);
+
+        const lessons = await lessonsCollection
+          .find(query)
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .toArray();
+
+        res.send({
+          lessons,
+          total,
+          totalPages: Math.ceil(total / limit),
+          currentPage: page,
+        });
+      } catch (err) {
+        res.status(500).send({ message: "Failed to load lessons" });
+      }
     });
 
     // get lessons by user email
